@@ -19,6 +19,8 @@
 // SOFTWARE.
 
 import 'dart:async';
+import 'dart:ffi';
+import 'dart:collection';
 
 import 'package:flutter/services.dart';
 
@@ -43,12 +45,22 @@ class BeaconBroadcast {
   String? _layout;
   int? _manufacturerId;
   List<int>? _extraData;
+  List<BeaconService>? _services;
 
   static const MethodChannel _methodChannel =
       const MethodChannel('pl.pszklarska.beaconbroadcast/beacon_state');
 
   static const EventChannel _eventChannel =
       const EventChannel('pl.pszklarska.beaconbroadcast/beacon_events');
+
+  static final EventChannel _advertisingStateChangeEventChannel =
+      BeaconEventChannelType.advertisingStateChange.getEventChannel();
+
+  static final EventChannel _characteristicReceiveReadEventChannel =
+      BeaconEventChannelType.characteristicReceiveRead.getEventChannel();
+
+  static final EventChannel _characteristicReceiveWriteEventChannel =
+      BeaconEventChannelType.characteristicReceiveRead.getEventChannel();
 
   /// Sets UUID for beacon.
   ///
@@ -172,6 +184,16 @@ class BeaconBroadcast {
     return this;
   }
 
+  /// Sets beacon services.
+  ///
+  /// [services] is List<BeaconService>
+  ///
+  /// This parameter is required for the default layout
+  BeaconBroadcast setServices(List<BeaconService> services) {
+    _services = services;
+    return this;
+  }
+
   /// Starts beacon advertising.
   ///
   /// Before starting you must set  [_uuid].
@@ -208,6 +230,7 @@ class BeaconBroadcast {
       "layout": _layout,
       "manufacturerId": _manufacturerId,
       "extraData": _extraData,
+      "services": _services?.map((e) => e.toJson()).toList(),
     };
 
     await _methodChannel.invokeMethod('start', params);
@@ -228,7 +251,11 @@ class BeaconBroadcast {
   /// After listening to this Stream, you'll be notified about changes in beacon advertising state.
   /// Returns `true` if beacon is advertising. See also: [isAdvertising()]
   Stream<bool> getAdvertisingStateChange() {
-    return _eventChannel.receiveBroadcastStream().cast<bool>();
+    // return _eventChannel.receiveBroadcastStream().cast<bool>();
+    return _advertisingStateChangeEventChannel
+        .receiveBroadcastStream(
+            BeaconEventChannelType.advertisingStateChange.id)
+        .cast<bool>();
   }
 
   /// Checks if device supports transmission. For iOS it returns always true.
@@ -243,6 +270,30 @@ class BeaconBroadcast {
     var isTransmissionSupported =
         await _methodChannel.invokeMethod('isTransmissionSupported');
     return _beaconStatusFromInt(isTransmissionSupported);
+  }
+
+  /// Returns Stream of CharacteristicReceiveRead event.
+  Stream<CharacteristicReceive> getCharacteristicReceiveRead() {
+    return _characteristicReceiveReadEventChannel
+        .receiveBroadcastStream(
+            BeaconEventChannelType.characteristicReceiveRead.id)
+        .cast<Map<Object?, Object?>>()
+        .map<CharacteristicReceive>((event) => CharacteristicReceive(
+              uuid: event["uuid"] as String,
+              value: event["value"] as String?,
+            ));
+  }
+
+  /// Returns Stream of CharacteristicReceiveWrite event.
+  Stream<CharacteristicReceive> getCharacteristicReceiveWrite() {
+    return _characteristicReceiveWriteEventChannel
+        .receiveBroadcastStream(
+            BeaconEventChannelType.characteristicReceiveWrite.id)
+        .cast<Map<Object?, Object?>>()
+        .map<CharacteristicReceive>((event) => CharacteristicReceive(
+              uuid: event["uuid"] as String,
+              value: event["value"] as String?,
+            ));
   }
 }
 
@@ -304,4 +355,103 @@ int? _advertiseModeToInt(AdvertiseMode advMode) {
   return _intToAdvertiseMode.entries
       .firstWhere((element) => element.value == advMode)
       .key;
+}
+
+class BeaconService {
+  String uuid;
+  bool? primary;
+  List<BeaconCharacteristic> characteristics;
+
+  BeaconService(
+      {required this.uuid, bool? primary, required this.characteristics}) {
+    this.primary = primary ?? false;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'uuid': uuid,
+        'primary': primary,
+        'characteristics': characteristics.map((e) => e.toJson()).toList(),
+      };
+}
+
+class BeaconCharacteristic {
+  String uuid;
+  List<CharacteristicProperty> properties;
+  String? value;
+  ValueType valueType = ValueType.none;
+  List<CharacteristicPermission> permissions;
+
+  BeaconCharacteristic(
+      {required this.uuid,
+      this.value,
+      required this.properties,
+      required this.permissions});
+
+  Map<String, dynamic> toJson() => {
+        'uuid': uuid,
+        'value': value,
+        'properties': properties.map((e) => e.name).toList(),
+        'permissions': permissions.map((e) => e.name).toList(),
+      };
+}
+
+class CharacteristicReceive {
+  String uuid;
+  String? value;
+  CharacteristicReceive({required this.uuid, this.value});
+}
+
+enum ValueType {
+  string,
+  int,
+  float,
+  double,
+  bool,
+  none,
+}
+
+enum CharacteristicProperty {
+  broadcast,
+  read,
+  writeWithoutResponse,
+  write,
+  notify,
+  indicate,
+  authenticatedSignedWrites,
+  extendedProperties,
+  notifyEncryptionRequired,
+  IndicateEncryptionRequired
+}
+
+enum CharacteristicPermission {
+  readable,
+  writeable,
+  readEncryptionRequired,
+  writeEncryptionRequired
+}
+
+class BeaconEventChannelType {
+  final String name;
+  final String id;
+
+  const BeaconEventChannelType({required this.name, required this.id});
+
+  getEventChannel() {
+    return EventChannel(this.name);
+  }
+
+  static const advertisingStateChange = const BeaconEventChannelType(
+      name:
+          'pl.pszklarska.beaconbroadcast/advertising_state_change_beacon_events',
+      id: 'advertising_state_change');
+
+  static const characteristicReceiveRead = const BeaconEventChannelType(
+      name:
+          'pl.pszklarska.beaconbroadcast/characteristic_receive_read_beacon_events',
+      id: 'characteristic_receive_read');
+
+  static const characteristicReceiveWrite = const BeaconEventChannelType(
+      name:
+          'pl.pszklarska.beaconbroadcast/characteristic_receive_write_beacon_events',
+      id: 'characteristic_receive_write');
 }
