@@ -50,9 +50,6 @@ class BeaconBroadcast {
   static const MethodChannel _methodChannel =
       const MethodChannel('pl.pszklarska.beaconbroadcast/beacon_state');
 
-  static const EventChannel _eventChannel =
-      const EventChannel('pl.pszklarska.beaconbroadcast/beacon_events');
-
   static final EventChannel _advertisingStateChangeEventChannel =
       BeaconEventChannelType.advertisingStateChange.getEventChannel();
 
@@ -251,7 +248,6 @@ class BeaconBroadcast {
   /// After listening to this Stream, you'll be notified about changes in beacon advertising state.
   /// Returns `true` if beacon is advertising. See also: [isAdvertising()]
   Stream<bool> getAdvertisingStateChange() {
-    // return _eventChannel.receiveBroadcastStream().cast<bool>();
     return _advertisingStateChangeEventChannel
         .receiveBroadcastStream(
             BeaconEventChannelType.advertisingStateChange.id)
