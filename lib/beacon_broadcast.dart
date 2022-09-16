@@ -19,8 +19,6 @@
 // SOFTWARE.
 
 import 'dart:async';
-import 'dart:ffi';
-import 'dart:collection';
 
 import 'package:flutter/services.dart';
 
@@ -57,7 +55,7 @@ class BeaconBroadcast {
       BeaconEventChannelType.characteristicReceiveRead.getEventChannel();
 
   static final EventChannel _characteristicReceiveWriteEventChannel =
-      BeaconEventChannelType.characteristicReceiveRead.getEventChannel();
+      BeaconEventChannelType.characteristicReceiveWrite.getEventChannel();
 
   /// Sets UUID for beacon.
   ///

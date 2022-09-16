@@ -139,7 +139,7 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         if isFound {
             peripheral.respond(to: requests[0], withResult: .success)
         } else {
-            peripheral.respond(to: request, withResult: .attributeNotFound)
+            peripheral.respond(to: requests[0], withResult: .attributeNotFound)
         }
     }
 }
