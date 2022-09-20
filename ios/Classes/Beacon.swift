@@ -15,10 +15,9 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
     var beaconPeripheralData: NSDictionary!
     var onAdvertisingStateChanged: ((Bool) -> Void)?
     var onCharacteristicReceiveRead: ((BeaconCharacteristic) -> Void)?
-    var onCharacteristicReceiveWrite: ((BeaconCharacteristic) -> Void)?
+    var onCharacteristicReceiveWrite: (([BeaconCharacteristic]) -> Void)?
 
     var shouldStartAdvertise: Bool = false
-    var beaconServices: [BeaconService]?
 
     var beaconData: BeaconData?
 
@@ -34,9 +33,8 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
                                     major: major, minor: minor, identifier: beaconID)
 
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
-        beaconPeripheralData = region.peripheralData(withMeasuredPower: beaconData.transmissionPower)
-        beaconServices = beaconData.services
 
+        beaconPeripheralData = region.peripheralData(withMeasuredPower: beaconData.transmissionPower)
         shouldStartAdvertise = true
     }
 
@@ -56,7 +54,7 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
     // event handler END
 
-    func setBeaconServices(services: [BeaconService]?) {
+    func addBeaconServices(services: [BeaconService]?) {
         for service in services ?? [] {
             let mutableService = CBMutableService(
                 type: CBUUID(string: service.uuid),
@@ -87,6 +85,15 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         }
     }
 
+    func updateBeaconServices(services: [BeaconService]?) {
+        self.beaconData?.services = services
+
+        peripheralManager?.removeAllServices()
+        if services != nil {
+            addBeaconServices(services: services!)
+        }
+    }
+
     // -----------------------------------------------------------------------------------------
     // event handlers
     // https://developer.apple.com/documentation/corebluetooth/cbperipheralmanagerdelegate
@@ -100,47 +107,94 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         if peripheral.state == .poweredOn && shouldStartAdvertise {
             shouldStartAdvertise = false
             peripheralManager.startAdvertising(((beaconPeripheralData as NSDictionary) as! [String: Any]))
-            setBeaconServices(services: self.beaconServices)
+            addBeaconServices(services: self.beaconData?.services)
         }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        debugPrint("[didReceiveRead] called")
+
         let service: BeaconService? = self.beaconData?.services?.first {
             $0.uuid == request.characteristic.service?.uuid.uuidString ?? ""
         }
+        if service == nil {
+            debugPrint("[didReceiveRead] error: not found service.")
+            peripheral.respond(to: request, withResult: .attributeNotFound)
+            return
+        }
+
         let characteristic: BeaconCharacteristic? = service?.characteristics.first {
             $0.uuid == request.characteristic.uuid.uuidString
         }
-        if characteristic != nil {
-            self.onCharacteristicReceiveRead?(characteristic!)
-            request.value = characteristic!.value?.data(using: .utf8)
-            peripheral.respond(to: request, withResult: .success)
-        } else {
+        if characteristic == nil {
+            debugPrint("[didReceiveRead] error: not found characteristic.")
             peripheral.respond(to: request, withResult: .attributeNotFound)
+            return
         }
+
+        debugPrint("[didReceiveRead] success.")
+        self.onCharacteristicReceiveRead?(characteristic!)
+        request.value = characteristic!.value?.data(using: .utf8)
+        peripheral.respond(to: request, withResult: .success)
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        var isFound = false
-        for request in requests {
-            let service: BeaconService? = self.beaconData?.services?.first {
-                $0.uuid == request.characteristic.service?.uuid.uuidString ?? ""
-            }
-            let characteristic: BeaconCharacteristic? = service?.characteristics.first {
-                $0.uuid == request.characteristic.uuid.uuidString
-            }
-            if characteristic != nil {
-                isFound = true
-                characteristic!.value = request.value != nil ? String(data: request.value!, encoding: .utf8) : nil
-                self.onCharacteristicReceiveWrite?(characteristic!)
-            }
+        debugPrint("[didReceiveWrite] called")
+        guard let firstRequest: CBATTRequest = requests.first else {
+            return
         }
 
-        if isFound {
-            peripheral.respond(to: requests[0], withResult: .success)
-        } else {
-            peripheral.respond(to: requests[0], withResult: .attributeNotFound)
+        var responseCharacteristics: [BeaconCharacteristic] = []
+
+        for request in requests {
+            let service: BeaconService? = self.beaconData?.services?.first {
+                $0.uuid.uppercased() == (request.characteristic.service?.uuid.uuidString ?? "").uppercased()
+            }
+            if service == nil {
+                debugPrint("[didReceiveWrite] error: not found service.")
+                peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
+                return
+            }
+
+            let characteristic: BeaconCharacteristic? = service?.characteristics.first {
+                $0.uuid.uppercased() == request.characteristic.uuid.uuidString.uppercased()
+            }
+            if characteristic == nil {
+                debugPrint("[didReceiveWrite] error: not found characteristic.")
+                peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
+                return
+            }
+
+            var requestValue: String? = request.value != nil ? String(data: request.value!, encoding: .utf8) : nil
+            if !self.validateRequestValue(
+                validMethod: characteristic?.validMethod,
+                validValue: characteristic?.validValue,
+                requestValue: requestValue) {
+                debugPrint("[didReceiveWrite] error: failed to call validateRequestValue.")
+                peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
+                return
+            }
+
+            characteristic!.value = requestValue
+            responseCharacteristics.append(characteristic!)
         }
+
+        debugPrint("[didReceiveWrite] success")
+
+        self.onCharacteristicReceiveWrite?(responseCharacteristics)
+        peripheral.respond(to: firstRequest, withResult: .success)
+    }
+
+    func validateRequestValue(validMethod: String?, validValue: String?, requestValue: String?) -> Bool {
+        print("validateRequestValue validMethod=" + (validMethod ?? "") + ", validValue=" + (validValue ?? "") + ", requestValue=" + (requestValue ?? ""))
+        if validMethod != nil && validValue != nil && requestValue != nil {
+            if validMethod == "match" {
+                return validValue == requestValue
+            } else if validMethod == "prefixMatch" {
+                return requestValue?.starts(with: validValue ?? "") ?? false
+            }
+        }
+        return false
     }
 }
 
@@ -191,12 +245,23 @@ class BeaconService {
 class BeaconCharacteristic {
     var uuid: String
     var value: String?
+    var validMethod: String?
+    var validValue: String?
     var properties: CBCharacteristicProperties
     var permissions: CBAttributePermissions
 
-    init(uuid: String, value: String?, properties: CBCharacteristicProperties, permissions: CBAttributePermissions) {
+    init(uuid: String,
+         value: String?,
+         validMethod: String?,
+         validValue: String?,
+         properties: CBCharacteristicProperties,
+         permissions: CBAttributePermissions
+    ) {
+
         self.uuid = uuid
         self.value = value
+        self.validMethod = validMethod
+        self.validValue = validValue
         self.properties = properties
         self.permissions = permissions
     }
@@ -205,6 +270,8 @@ class BeaconCharacteristic {
         let service = BeaconCharacteristic(
             uuid: data["uuid"] as! String,
             value: data["value"] as? String,
+            validMethod: data["validMethod"] as? String,
+            validValue: data["validValue"] as? String,
             properties: CBCharacteristicProperties.fromStringList(
                 values: data["properties"] as! [String]
             ),

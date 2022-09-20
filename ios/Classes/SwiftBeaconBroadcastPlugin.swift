@@ -75,13 +75,13 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
                 self.characteristicReceiveReadEventSink!(data)
             }
         }
-        beacon.onCharacteristicReceiveWrite = {(characteristic: BeaconCharacteristic) in
+        beacon.onCharacteristicReceiveWrite = {(characteristics: [BeaconCharacteristic]) in
             if self.characteristicReceiveWriteEventSink != nil {
-                let data: [String: Any?] = [
-                    "uuid": characteristic.uuid,
-                    "value": characteristic.value
-                ]
-                self.characteristicReceiveWriteEventSink!(data)
+                let list = characteristics.map { [
+                    "uuid": $0.uuid,
+                    "value": $0.value
+                ] }
+                self.characteristicReceiveWriteEventSink!(list)
             }
         }
     }
@@ -96,14 +96,15 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
             isAdvertising(call, result)
         case "isTransmissionSupported":
             isTransmissionSupported(call, result)
+        case "updateServices":
+            updateBeaconServices(call, result)
         default:
             result(FlutterMethodNotImplemented)
         }
     }
 
     private func startBeacon(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
-        var map = call.arguments as? [String: Any]
-
+        let map = call.arguments as? [String: Any]
         let servicesMap = map?["services"] as? [[String: Any]]
         let services = servicesMap?.map { BeaconService.fromMap(data: $0) }
 
@@ -132,6 +133,13 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
     private func isTransmissionSupported(_ call: FlutterMethodCall,
                                          _ result: @escaping FlutterResult) {
         result(0)
+    }
+
+    private func updateBeaconServices(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+        let servicesMap = call.arguments as? [[String: Any]]
+        let services = servicesMap?.map { BeaconService.fromMap(data: $0) }
+        beacon.updateBeaconServices(services: services)
+        result(nil)
     }
 }
 

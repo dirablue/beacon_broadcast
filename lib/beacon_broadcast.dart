@@ -189,6 +189,17 @@ class BeaconBroadcast {
     return this;
   }
 
+  /// Update beacon services.
+  ///
+  /// [services] is List<BeaconService>
+  ///
+  /// This parameter is required for the default layout
+  Future<void> updateServices(List<BeaconService> services) async {
+    _services = services;
+    await _methodChannel.invokeMethod(
+        'updateServices', _services?.map((e) => e.toJson()).toList());
+  }
+
   /// Starts beacon advertising.
   ///
   /// Before starting you must set  [_uuid].
@@ -272,22 +283,27 @@ class BeaconBroadcast {
         .receiveBroadcastStream(
             BeaconEventChannelType.characteristicReceiveRead.id)
         .cast<Map<Object?, Object?>>()
-        .map<CharacteristicReceive>((event) => CharacteristicReceive(
-              uuid: event["uuid"] as String,
-              value: event["value"] as String?,
-            ));
+        .map<CharacteristicReceive>(
+          (event) => CharacteristicReceive(
+            uuid: event["uuid"] as String,
+            value: event["value"] as String?,
+          ),
+        );
   }
 
   /// Returns Stream of CharacteristicReceiveWrite event.
-  Stream<CharacteristicReceive> getCharacteristicReceiveWrite() {
+  Stream<List<CharacteristicReceive>> getCharacteristicReceiveWrite() {
     return _characteristicReceiveWriteEventChannel
         .receiveBroadcastStream(
             BeaconEventChannelType.characteristicReceiveWrite.id)
-        .cast<Map<Object?, Object?>>()
-        .map<CharacteristicReceive>((event) => CharacteristicReceive(
-              uuid: event["uuid"] as String,
-              value: event["value"] as String?,
-            ));
+        .cast<List<Object?>>()
+        .map<List<CharacteristicReceive>>((list) => list
+            .cast<Map<Object?, Object?>>()
+            .map<CharacteristicReceive>((e) => CharacteristicReceive(
+                  uuid: e["uuid"] as String,
+                  value: e["value"] as String?,
+                ))
+            .toList());
   }
 }
 
@@ -372,18 +388,25 @@ class BeaconCharacteristic {
   String uuid;
   List<CharacteristicProperty> properties;
   String? value;
+  ValidMethod? validMethod;
+  String? validValue;
   ValueType valueType = ValueType.none;
   List<CharacteristicPermission> permissions;
 
-  BeaconCharacteristic(
-      {required this.uuid,
-      this.value,
-      required this.properties,
-      required this.permissions});
+  BeaconCharacteristic({
+    required this.uuid,
+    this.value,
+    this.validMethod,
+    this.validValue,
+    required this.properties,
+    required this.permissions,
+  });
 
   Map<String, dynamic> toJson() => {
         'uuid': uuid,
         'value': value,
+        'validMethod': validMethod?.name,
+        'validValue': validValue,
         'properties': properties.map((e) => e.name).toList(),
         'permissions': permissions.map((e) => e.name).toList(),
       };
@@ -422,6 +445,11 @@ enum CharacteristicPermission {
   writeable,
   readEncryptionRequired,
   writeEncryptionRequired
+}
+
+enum ValidMethod {
+  prefixMatch, // 前方一致
+  match, // 完全一致
 }
 
 class BeaconEventChannelType {
