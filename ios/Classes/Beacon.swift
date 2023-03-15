@@ -14,8 +14,17 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
     var peripheralManager: CBPeripheralManager!
     var beaconPeripheralData: NSDictionary!
     var onAdvertisingStateChanged: ((Bool) -> Void)?
+    
+    // イベントハンドリング
+    var useEventHandler: Bool = false
+    var onCharacteristicRead: ((String, BeaconCharacteristic, @escaping FlutterResult) -> Void?)?
+    var onCharacteristicWrite: ((String, BeaconCharacteristic, String?, @escaping FlutterResult) -> Void)?
+    
+    // イベント完了後に呼び出される処理
     var onCharacteristicReceiveRead: ((BeaconCharacteristic) -> Void)?
     var onCharacteristicReceiveWrite: (([BeaconCharacteristic]) -> Void)?
+
+    // private var flutterMethodChannel: FlutterMethodChannel?
 
     var shouldStartAdvertise: Bool = false
 
@@ -31,6 +40,8 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
         let region = CLBeaconRegion(proximityUUID: proximityUUID!,
                                     major: major, minor: minor, identifier: beaconID)
+        // let region: CLBeaconRegion = CLBeaconRegion(uuid: proximityUUID!,
+        //                             major: major, minor: minor, identifier: beaconID)
 
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
 
@@ -54,7 +65,9 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
     // event handler END
 
-    func addBeaconServices(services: [BeaconService]?) {
+    func addBeaconServices(services: [BeaconService]?) -> [CBService] {
+        var peripheralServices:[CBService] = []
+
         for service in services ?? [] {
             let mutableService = CBMutableService(
                 type: CBUUID(string: service.uuid),
@@ -82,7 +95,10 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
             mutableService.characteristics = mutableCharacteristics
             peripheralManager?.add(mutableService)
+            peripheralServices.append(mutableService)
         }
+
+        return peripheralServices
     }
 
     func updateBeaconServices(services: [BeaconService]?) {
@@ -108,6 +124,26 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
             shouldStartAdvertise = false
             peripheralManager.startAdvertising(((beaconPeripheralData as NSDictionary) as! [String: Any]))
             addBeaconServices(services: self.beaconData?.services)
+
+            // let characteristicID = CBUUID(string: "890aa912-c414-440d-88a2-c7f66179589b")
+
+            // // キャラクタリスティックを作成し、設定する
+            // let characteristic = CBMutableCharacteristic(type: characteristicID,
+            //                         properties: [.write, .notify],
+            //                         value: nil,
+            //                         permissions: .writeable)
+
+            // // サービスを作成し、そこにキャラクタリスティックを追加する
+            // let serviceID = CBUUID(string: "9f37e282-60b6-42b1-a02f-7341da5e2eba")
+            // let service = CBMutableService(type: serviceID, primary: true)
+            // service.characteristics = [characteristic]
+
+            // このサービスをペリフェラルマネージャに登録する
+            // peripheralManager.add(service)
+
+            // peripheralManager.startAdvertising(
+            //     [CBAdvertisementDataServiceUUIDsKey: [service],
+            //     CBAdvertisementDataLocalNameKey: "Device Information"])
         }
     }
 
@@ -115,7 +151,7 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         debugPrint("[didReceiveRead] called")
 
         let service: BeaconService? = self.beaconData?.services?.first {
-            $0.uuid == request.characteristic.service?.uuid.uuidString ?? ""
+            $0.uuid.lowercased() == request.characteristic.service?.uuid.uuidString.lowercased() ?? ""
         }
         if service == nil {
             debugPrint("[didReceiveRead] error: not found service.")
@@ -124,7 +160,7 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         }
 
         let characteristic: BeaconCharacteristic? = service?.characteristics.first {
-            $0.uuid == request.characteristic.uuid.uuidString
+            $0.uuid.lowercased() == request.characteristic.uuid.uuidString.lowercased()
         }
         if characteristic == nil {
             debugPrint("[didReceiveRead] error: not found characteristic.")
@@ -132,8 +168,41 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
             return
         }
 
+        if useEventHandler {
+            self.onCharacteristicRead!(service!.uuid, characteristic!, { result in
+                var value = result as? String
+                if value == nil {
+                    debugPrint("[didReceiveRead] error: failed to read characteristic.")
+                    return
+                }
+                characteristic?.value = value
+
+                debugPrint("[didReceiveRead] success.")
+                self.onCharacteristicReceiveRead?(characteristic!)
+                
+                request.value = characteristic!.value?.data(using: .utf8)
+                peripheral.respond(to: request, withResult: .success)
+            })
+            return
+
+            // var result = self.onCharacteristicRead!(service!.uuid, characteristic!)
+            // if result == nil {
+            //     debugPrint("[didReceiveRead] error: failed to read characteristic.")
+            //     return
+            // }
+            // characteristic?.value = result
+
+            // debugPrint("[didReceiveRead] success.")
+            // self.onCharacteristicReceiveRead?(characteristic!)
+            
+            // request.value = characteristic!.value?.data(using: .utf8)
+            // peripheral.respond(to: request, withResult: .success)
+            // return
+        }
+
         debugPrint("[didReceiveRead] success.")
         self.onCharacteristicReceiveRead?(characteristic!)
+        
         request.value = characteristic!.value?.data(using: .utf8)
         peripheral.respond(to: request, withResult: .success)
     }
@@ -146,26 +215,29 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
         var responseCharacteristics: [BeaconCharacteristic] = []
 
-        for request in requests {
-            let service: BeaconService? = self.beaconData?.services?.first {
-                $0.uuid.uppercased() == (request.characteristic.service?.uuid.uuidString ?? "").uppercased()
-            }
-            if service == nil {
-                debugPrint("[didReceiveWrite] error: not found service.")
-                peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
-                return
-            }
+        var request = firstRequest
+        // for request in requests {
+        let service: BeaconService? = self.beaconData?.services?.first {
+            $0.uuid.lowercased() == (request.characteristic.service?.uuid.uuidString.lowercased() ?? "").lowercased()
+        }
+        if service == nil {
+            debugPrint("[didReceiveWrite] error: not found service.")
+            peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
+            return
+        }
 
-            let characteristic: BeaconCharacteristic? = service?.characteristics.first {
-                $0.uuid.uppercased() == request.characteristic.uuid.uuidString.uppercased()
-            }
-            if characteristic == nil {
-                debugPrint("[didReceiveWrite] error: not found characteristic.")
-                peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
-                return
-            }
+        let characteristic: BeaconCharacteristic? = service?.characteristics.first {
+            $0.uuid.lowercased() == request.characteristic.uuid.uuidString.lowercased()
+        }
+        if characteristic == nil {
+            debugPrint("[didReceiveWrite] error: not found characteristic.")
+            peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
+            return
+        }
+        
+        var requestValue: String? = request.value != nil ? String(data: request.value!, encoding: .utf8) : nil
 
-            var requestValue: String? = request.value != nil ? String(data: request.value!, encoding: .utf8) : nil
+        if characteristic?.validMethod != nil {
             if !self.validateRequestValue(
                 validMethod: characteristic?.validMethod,
                 validValue: characteristic?.validValue,
@@ -174,12 +246,43 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
                 peripheralManager?.respond(to: firstRequest, withResult: .attributeNotFound)
                 return
             }
+        }
 
-            characteristic!.value = requestValue
-            responseCharacteristics.append(characteristic!)
+        if useEventHandler {
+            self.onCharacteristicWrite!(service!.uuid, characteristic!, requestValue, { result in 
+                var success = result as? Bool
+                if success == nil || success == false {
+                    debugPrint("[didReceiveWrite] error: failed to write characteristic.")
+                    return
+                }
+
+                debugPrint("[didReceiveWrite] success")
+                characteristic!.value = requestValue
+                responseCharacteristics.append(characteristic!)
+
+                self.onCharacteristicReceiveWrite?(responseCharacteristics)
+                peripheral.respond(to: firstRequest, withResult: .success)
+            })
+            return
+
+            // var success = self.onCharacteristicWrite!(service!.uuid, characteristic!)
+            // if success == nil || success == false {
+            //     debugPrint("[didReceiveWrite] error: failed to write characteristic.")
+            //     return
+            // }
+
+            // debugPrint("[didReceiveWrite] success")
+            // characteristic!.value = requestValue
+            // responseCharacteristics.append(characteristic!)
+
+            // self.onCharacteristicReceiveWrite?(responseCharacteristics)
+            // peripheral.respond(to: firstRequest, withResult: .success)
+            // return
         }
 
         debugPrint("[didReceiveWrite] success")
+        characteristic!.value = requestValue
+        responseCharacteristics.append(characteristic!)
 
         self.onCharacteristicReceiveWrite?(responseCharacteristics)
         peripheral.respond(to: firstRequest, withResult: .success)

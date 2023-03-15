@@ -11,10 +11,14 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
     private var characteristicReceiveReadEventSink: FlutterEventSink?
     private var characteristicReceiveWriteEventSink: FlutterEventSink?
 
+    private static var channel: FlutterMethodChannel?
+    private static var beaconEventHandlerChannel: FlutterMethodChannel?
+
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = SwiftBeaconBroadcastPlugin()
 
-        let channel = FlutterMethodChannel(name: "pl.pszklarska.beaconbroadcast/beacon_state", binaryMessenger: registrar.messenger())
+        Self.channel = FlutterMethodChannel(name: "pl.pszklarska.beaconbroadcast/beacon_state", binaryMessenger: registrar.messenger())
+        Self.beaconEventHandlerChannel = FlutterMethodChannel(name: "pl.pszklarska.beaconbroadcast/beacon_event_callback", binaryMessenger: registrar.messenger())
 
         var beaconEventChannel = FlutterEventChannel(name: BeaconEventChannelType.advertisingStateChange.name, binaryMessenger: registrar.messenger())
         beaconEventChannel.setStreamHandler(instance)
@@ -26,8 +30,38 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
         beaconEventChannel.setStreamHandler(instance)
 
         instance.registerBeaconListener()
+        registrar.addMethodCallDelegate(instance, channel: Self.channel!)
 
-        registrar.addMethodCallDelegate(instance, channel: channel)
+        instance.registerBeaconEventHandler();
+    }
+
+    func registerBeaconEventHandler() {
+        Self.beaconEventHandlerChannel?.setMethodCallHandler { (call, result) in
+            switch call.method {
+            case "use_event_handler":
+                self.beacon.useEventHandler = true
+                self.beacon.onCharacteristicRead = {(serviceUuid: String, characteristic: BeaconCharacteristic, result: @escaping FlutterResult) in
+                    Self.beaconEventHandlerChannel!.invokeMethod("characteristic_read", arguments: [
+                        "service_uuid": serviceUuid,
+                        "uuid": characteristic.uuid,
+                    ]) { res in
+                        result(res)
+                    }
+                }
+                self.beacon.onCharacteristicWrite = {(serviceUuid: String, characteristic: BeaconCharacteristic, requestValue: String?, result: @escaping FlutterResult) in
+                    Self.beaconEventHandlerChannel!.invokeMethod("characteristic_write", arguments: [
+                        "service_uuid": serviceUuid,
+                        "uuid": characteristic.uuid,
+                        "value": requestValue
+                    ]) { res in
+                        result(res)
+                    }
+                }
+                result(true)
+            default:
+                result(FlutterMethodNotImplemented)
+            }
+        }
     }
 
     public func onListen(withArguments arguments: Any?,
@@ -127,6 +161,17 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
 
     private func isAdvertising(_ call: FlutterMethodCall,
                                _ result: @escaping FlutterResult) {
+
+        // Self.beaconEventHandlerChannel!.invokeMethod("test", arguments: nil) { res in
+        //     print("test: \(res)")
+        //     result(res!)
+        // }
+
+        // DispatchQueue.global().async {
+        //     var testRes = try Self.beaconEventHandlerChannel!.invokeMethod("test", arguments: nil)
+        //     print("test: \(testRes)")
+        //     result(testRes!)
+        // }
         result(beacon.isAdvertising())
     }
 
