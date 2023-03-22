@@ -40,8 +40,6 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
 
         let region = CLBeaconRegion(proximityUUID: proximityUUID!,
                                     major: major, minor: minor, identifier: beaconID)
-        // let region: CLBeaconRegion = CLBeaconRegion(uuid: proximityUUID!,
-        //                             major: major, minor: minor, identifier: beaconID)
 
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
 
@@ -299,6 +297,7 @@ class Beacon: NSObject, CBPeripheralManagerDelegate {
         }
         return false
     }
+
 }
 
 class BeaconData {

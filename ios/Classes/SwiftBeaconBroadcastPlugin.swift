@@ -161,17 +161,6 @@ public class SwiftBeaconBroadcastPlugin: NSObject, FlutterPlugin, FlutterStreamH
 
     private func isAdvertising(_ call: FlutterMethodCall,
                                _ result: @escaping FlutterResult) {
-
-        // Self.beaconEventHandlerChannel!.invokeMethod("test", arguments: nil) { res in
-        //     print("test: \(res)")
-        //     result(res!)
-        // }
-
-        // DispatchQueue.global().async {
-        //     var testRes = try Self.beaconEventHandlerChannel!.invokeMethod("test", arguments: nil)
-        //     print("test: \(testRes)")
-        //     result(testRes!)
-        // }
         result(beacon.isAdvertising())
     }
 
